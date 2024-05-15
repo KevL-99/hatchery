@@ -1,0 +1,197 @@
+#!/bin/bash
+#
+#   system - Setup a group of machines to run a distributed system
+#
+#   Syntax: ./setup <output> <etc-asset> <assign> <asset>
+#   <assign> syntax: server=(ip:silk-port|ip:silk-port....)
+#
+#   Read the roles written in the given <assign> file and configure the
+#   corresponding nodes to behave accordingly for the system.
+#   If the nodes need some assets to work, they find the specific asset for
+#   the current deployment in <etc-asset> while the top asset directory is
+#   specified by <asset>.
+#
+#   On success, write silk routes corresponding to each role in the <output>
+#   file.
+#
+
+
+set -e
+
+
+output="$1"    ; shift ; test "x${output}" != 'x'
+etc_asset="$1" ; shift ; test "x${etc_asset}" != 'x'
+assign="$1"    ; shift ; test "x${assign}" != 'x'
+asset="$1"     ; shift ; test "x${asset}" != 'x'
+
+source "${assign}"
+
+# System specific setup part --------------------------------------------------
+
+# Name of the deployment.
+# This name is reflected on the machines where the system is installed: the
+# configuration asset is copied at "~/.sui".
+#
+etc_name="${etc_asset##*/}"
+
+# Check that there is at least 1 server defined in <assign>.
+#
+test "x${server}" != 'x'
+test ${#server[@]} -gt 0
+
+
+source "${0%/*}/environment"
+
+workdir="$(mktemp -d --suffix='.d' "${0##*/}.XXXXXX")"
+trap "rm -rf '${workdir}'" EXIT
+
+# Build local informations.
+# We build three values:
+# - route    scalar variable which is the silk route to all servers
+# - servers  array variable containing the servers as they see each others
+# - arch     directory containing the arch of each server
+#
+route='('
+sep=''
+gensis_machine=''
+
+servers=()
+
+mkdir "${workdir}/arch"
+index=0
+
+for machine in "${server[@]}" ; do
+    route="${route}${sep}${machine}"
+    sep='|'
+
+    ip="${machine%:*}"
+    # TODO
+    # servers+=("${ip}:${sui_port}")
+    # sui_port+=10
+    servers+=(${ip})
+    genesis_machine="${machine}"
+
+    ~/silk/bin/silk run "${machine}" uname -m > "${workdir}/arch/${index}" &
+    index=$(( index + 1 ))
+done
+
+route="${route})"
+
+wait
+
+
+# Run genesis on one of the remote machines, download genesis folder to controller/local node
+
+~/silk/bin/silk run --source --local-command "${genesis_machine}" <<EOF
+
+#!/bin/bash
+
+set -e
+
+# Run sui genesis on one of the machines 
+sui genesis -f --benchmark-ips ${servers[@]}
+mv ~/.sui/sui_config/benchmark.aliases ~/.sui/sui_config/sui.aliases
+mv ~/.sui/sui_config/benchmark.keystore ~/.sui/sui_config/sui.keystore
+
+EOF
+
+mkdir "${workdir}/etc"
+(
+    cd "${workdir}/etc"
+
+    ~/silk/bin/silk run --source --local-command \
+	 "${genesis_machine}" <<EOF | tar -ixzpf -
+#!/bin/bash
+
+set -e
+
+(
+    cd ~/.sui
+    tar -czf - *
+)
+EOF
+)
+
+# server script - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+cat <<'EOF' > "${workdir}/server"
+#!/bin/bash
+
+set -e
+set -x
+
+
+# Launch fullnode, validator, and faucet
+# Binaries at: ~/sui/bin
+# Script at: ~/.sui
+# Configs at ~/.sui/sui_config
+
+ip="$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1')"
+validator_config="$(find ~/.sui/sui_config -type f -iname "${ip}-*.yaml")"
+
+
+# TODO: use variable for path: "~/${sui_bin_dir}/sui-node"
+~/sui/bin/sui-node --config-path "${validator_config}" & 
+sleep 5
+~/sui/bin/sui-node --config-path "/home/ubuntu/.sui/sui_config/fullnode.yaml" && fg
+
+EOF
+
+chmod 755 "${workdir}/server"
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+# Upload the scripts and the assets to the relevant machines
+#
+echo "upload assets"
+echo "${route}"
+~/silk/bin/silk run --source --local-command "${route}" <<EOF
+#!/bin/bash
+
+# No need to mkdir since just these directories are created by the build script
+# mkdir '${sui_dir}' 2> '/dev/null'
+# mkdir '${sui_bin_dir}' 2> '/dev/null'
+
+set -e
+
+# test -d '~/.sui'
+
+# if [ -e '~/.sui' ] ; then
+#     rm -rf '~/.sui'
+# fi
+
+rm -rf '.sui'
+mkdir '.sui'
+EOF
+
+# Send config assets and server script
+~/silk/bin/silk send --compress --target-directory="/home/ubuntu/.sui" "${route}" "${workdir}/etc/"* "${workdir}/server"
+
+
+# No need to send binary assets because all binary assets are at appropriate directory after running the build script
+#
+# Send the appropriate binary assets.
+# For efficiency reasons, create one route per processor architecture and
+# broadcast in a single `silk send` command.
+#
+# cat "${workdir}/arch/"* | sort | uniq | while read arch ; do
+#     arch_route='('
+#     sep=''
+
+#     for i in $(seq 0 $(( ${#server[@]} ))) ; do
+# 	if [ "x$(cat "${workdir}/arch/${i}")" = "x${arch}" ] ; then
+# 	    arch_route="${arch_route}${sep}${server[${i}]}"
+# 	    sep='|'
+# 	fi
+#     done
+
+#     arch_route="${arch_route})"
+
+#     bin_asset="${asset}/bin/${arch}"
+
+#     ~/silk/bin/silk send --target-directory="${sui_bin_dir}" "${route}" "${bin_asset}/"*
+# done
+
+
+echo "servers='${route}'" > "${output}"
+
+# All binaries should be at sui_bin_dir, and server script+genesis at ~/.sui for each node

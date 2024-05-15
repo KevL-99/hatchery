@@ -1,0 +1,46 @@
+#!/bin/bash
+#
+#   build - download and build Sui executables and related official tools
+#
+
+
+set -e
+set -x
+
+
+output="$1"          ; shift ; test "x${output}" != 'x'
+builder_dir="$1"     ; shift ; test "x${builder_dir}" != 'x'
+sui_source="$1"      ; shift ; test "x${sui_source}" != 'x'
+
+
+
+if [ "${output:0:1}" != '/' ] ; then
+    output="${PWD}/${output}"
+fi
+
+
+if [ ! -e "${output}" ] ; then
+    mkdir "${output}"
+fi
+
+
+cd "${builder_dir}"
+
+
+. "$HOME/.cargo/env"
+git clone "${sui_source}" 'sui'
+
+
+(
+    # export GOPATH="${PWD}/.go"
+
+    cd 'sui'
+    git checkout "testnet"
+    cargo build --bin sui-faucet
+    cargo build --bin sui-node
+
+    
+
+    cp 'target/debug/sui-faucet' "${output}/sui-faucet"
+    cp 'target/debug/sui-node' "${output}/sui-node"
+)

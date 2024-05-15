@@ -1,0 +1,58 @@
+#!/bin/bash
+#
+#   environment - defines commonly used paths and variables on hatchery machine
+#
+
+
+# Top directory of this module.
+#
+sui_src="${0%/*}"
+
+
+# Top directory for build sources for this module.
+#
+sui_build_src="${sui_src}/build.d"
+
+
+# Cache directory for this module.
+# The cache is cleaned by the module when calling `make stop`.
+#
+sui_cache_src="${sui_src}/.cache"
+
+
+# This module uses the cache to put some binaries which are used in some other
+# scripts.
+#
+export PATH="${sui_cache_src}:${PATH}"
+
+
+# Top directory to put files related to Sui on remote machines.
+#
+sui_dir="sui"
+
+
+# Top directory to work in for the builder machines.
+#
+sui_builder_dir="${sui_dir}/builder"
+
+
+# Top directory to put executables to be used by a Sui node.
+#
+sui_bin_dir="${sui_dir}/bin"
+
+
+
+# ------------------------- deprecated ------------------------------
+# Top directory to put files during a Sui deployment.
+#
+sui_etc_dir="${sui_dir}/etc"
+
+
+# The port used by Sui servers to communicate with each others and reach
+# consensus.
+#
+sui_port=2000
+
+# The port used by Sui servers to listen for clients (WebSocket).
+#
+sui_rpcport=9000

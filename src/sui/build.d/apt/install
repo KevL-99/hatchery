@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -e
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
+
+sudo apt-get update
+sudo apt-get install -yy curl git-all cmake gcc libssl-dev pkg-config libclang-dev libpq-dev build-essential golang make net-tools
+cargo install --locked --git https://github.com/MystenLabs/sui.git --branch testnet sui
